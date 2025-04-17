@@ -1,6 +1,6 @@
 # Final-Project-Group4
 
-# Team Members:
+## Team Members:
 
 Chaya Chandana Doddaiggaluru Appajigowda
 Ramana Bhaskar Kosuru
