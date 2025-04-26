@@ -6,7 +6,7 @@ from tensorflow.keras.preprocessing.sequence import pad_sequences
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Embedding, LSTM, Dense, Dropout
 from tensorflow.keras.callbacks import EarlyStopping
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -15,10 +15,37 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import re
 import json
+from dataclasses import dataclass
+from typing import List, Optional
 
 # Download required NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
+
+@dataclass
+class ModelHyperparameters:
+    """Configuration class for model hyperparameters"""
+    # Embedding parameters
+    embedding_dim: int = 100
+    max_length: int = 300
+    
+    # LSTM parameters
+    lstm_units: int = 128
+    lstm_dropout: float = 0.2
+    lstm_recurrent_dropout: float = 0.2
+    
+    # Dense layer parameters
+    dense_units: int = 64
+    dense_dropout: float = 0.2
+    
+    # Training parameters
+    batch_size: int = 64
+    epochs: int = 10
+    validation_split: float = 0.1
+    early_stopping_patience: int = 3
+    
+    # Learning rate
+    learning_rate: float = 0.001
 
 def load_data(file_path, sample_size=100000):
     """Load and sample the dataset."""
@@ -54,23 +81,90 @@ def map_ratings_to_sentiment(rating):
     else:
         return 2  # Positive
 
-def create_model(vocab_size, max_length, embedding_dim=100):
-    """Create and compile the LSTM model."""
+def create_model(vocab_size: int, params: ModelHyperparameters) -> tf.keras.Model:
+    """Create and compile the LSTM model with configurable hyperparameters."""
     model = Sequential([
-        Embedding(input_dim=vocab_size, output_dim=embedding_dim, input_length=max_length),
-        LSTM(128, dropout=0.2, recurrent_dropout=0.2),
-        Dense(64, activation='relu'),
-        Dropout(0.2),
+        Embedding(
+            input_dim=vocab_size,
+            output_dim=params.embedding_dim,
+            input_length=params.max_length
+        ),
+        LSTM(
+            params.lstm_units,
+            dropout=params.lstm_dropout,
+            recurrent_dropout=params.lstm_recurrent_dropout
+        ),
+        Dense(params.dense_units, activation='relu'),
+        Dropout(params.dense_dropout),
         Dense(3, activation='softmax')
     ])
     
+    optimizer = tf.keras.optimizers.Adam(learning_rate=params.learning_rate)
+    
     model.compile(
-        optimizer='adam',
+        optimizer=optimizer,
         loss='sparse_categorical_crossentropy',
         metrics=['accuracy']
     )
     
     return model
+
+def tune_hyperparameters(
+    X_train: np.ndarray,
+    y_train: np.ndarray,
+    vocab_size: int,
+    param_grid: Optional[dict] = None
+) -> ModelHyperparameters:
+    """Perform hyperparameter tuning using grid search."""
+    if param_grid is None:
+        param_grid = {
+            'lstm_units': [64, 128, 256],
+            'lstm_dropout': [0.1, 0.2, 0.3],
+            'batch_size': [32, 64, 128],
+            'learning_rate': [0.001, 0.0001]
+        }
+    
+    best_params = None
+    best_score = 0
+    
+    # Simple grid search implementation
+    for lstm_units in param_grid['lstm_units']:
+        for lstm_dropout in param_grid['lstm_dropout']:
+            for batch_size in param_grid['batch_size']:
+                for learning_rate in param_grid['learning_rate']:
+                    params = ModelHyperparameters(
+                        lstm_units=lstm_units,
+                        lstm_dropout=lstm_dropout,
+                        batch_size=batch_size,
+                        learning_rate=learning_rate
+                    )
+                    
+                    model = create_model(vocab_size, params)
+                    
+                    # Train with early stopping
+                    early_stopping = EarlyStopping(
+                        monitor='val_loss',
+                        patience=params.early_stopping_patience,
+                        restore_best_weights=True
+                    )
+                    
+                    history = model.fit(
+                        X_train,
+                        y_train,
+                        epochs=params.epochs,
+                        batch_size=params.batch_size,
+                        validation_split=params.validation_split,
+                        callbacks=[early_stopping],
+                        verbose=0
+                    )
+                    
+                    # Use validation accuracy as the score
+                    val_accuracy = max(history.history['val_accuracy'])
+                    if val_accuracy > best_score:
+                        best_score = val_accuracy
+                        best_params = params
+    
+    return best_params
 
 def main():
     # Load and preprocess data
@@ -103,22 +197,31 @@ def main():
     X_train_pad = pad_sequences(X_train_seq, maxlen=max_length, padding='post')
     X_test_pad = pad_sequences(X_test_seq, maxlen=max_length, padding='post')
     
-    # Create and train model
-    print("Creating and training model...")
-    model = create_model(vocab_size, max_length)
+    # Hyperparameter tuning
+    print("Tuning hyperparameters...")
+    best_params = tune_hyperparameters(X_train_pad, y_train, vocab_size)
+    print("\nBest hyperparameters found:")
+    print(f"LSTM Units: {best_params.lstm_units}")
+    print(f"LSTM Dropout: {best_params.lstm_dropout}")
+    print(f"Batch Size: {best_params.batch_size}")
+    print(f"Learning Rate: {best_params.learning_rate}")
+    
+    # Create and train model with best parameters
+    print("\nTraining final model...")
+    model = create_model(vocab_size, best_params)
     
     early_stopping = EarlyStopping(
         monitor='val_loss',
-        patience=3,
+        patience=best_params.early_stopping_patience,
         restore_best_weights=True
     )
     
     history = model.fit(
         X_train_pad,
         y_train,
-        epochs=10,
-        batch_size=64,
-        validation_split=0.1,
+        epochs=best_params.epochs,
+        batch_size=best_params.batch_size,
+        validation_split=best_params.validation_split,
         callbacks=[early_stopping],
         verbose=1
     )
