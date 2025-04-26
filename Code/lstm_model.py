@@ -1,12 +1,9 @@
 import numpy as np
 import pandas as pd
-import tensorflow as tf
-from tensorflow.keras.preprocessing.text import Tokenizer
-from tensorflow.keras.preprocessing.sequence import pad_sequences
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Embedding, LSTM, Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping
-from sklearn.model_selection import train_test_split, GridSearchCV
+import torch
+import torch.nn as nn
+from torch.utils.data import Dataset, DataLoader
+from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -15,47 +12,67 @@ from nltk.corpus import stopwords
 from nltk.tokenize import word_tokenize
 import re
 import json
-from dataclasses import dataclass
-from typing import List, Optional
 import os
+from typing import List, Dict, Tuple
+from collections import Counter
+import optuna
+from tqdm import tqdm
 
 # Download required NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
 
-@dataclass
-class ModelHyperparameters:
-    """Configuration class for model hyperparameters"""
-    # Embedding parameters
-    embedding_dim: int = 100
-    max_length: int = 300
+class TextDataset(Dataset):
+    def __init__(self, texts: List[str], labels: List[int], vocab: Dict[str, int], max_length: int):
+        self.texts = texts
+        self.labels = labels
+        self.vocab = vocab
+        self.max_length = max_length
     
-    # LSTM parameters
-    lstm_units: int = 128
-    lstm_dropout: float = 0.2
-    lstm_recurrent_dropout: float = 0.2
+    def __len__(self):
+        return len(self.texts)
     
-    # Dense layer parameters
-    dense_units: int = 64
-    dense_dropout: float = 0.2
-    
-    # Training parameters
-    batch_size: int = 64
-    epochs: int = 10
-    validation_split: float = 0.1
-    early_stopping_patience: int = 3
-    
-    # Learning rate
-    learning_rate: float = 0.001
+    def __getitem__(self, idx):
+        text = self.texts[idx]
+        label = self.labels[idx]
+        
+        # Convert text to indices
+        tokens = word_tokenize(text.lower())
+        indices = [self.vocab.get(token, self.vocab['<UNK>']) for token in tokens]
+        
+        # Pad or truncate
+        if len(indices) < self.max_length:
+            indices = indices + [self.vocab['<PAD>']] * (self.max_length - len(indices))
+        else:
+            indices = indices[:self.max_length]
+        
+        return torch.tensor(indices, dtype=torch.long), torch.tensor(label, dtype=torch.long)
 
-def load_data(file_path: str, sample_size: int = 100000) -> pd.DataFrame:
+class LSTMClassifier(nn.Module):
+    def __init__(self, vocab_size: int, embedding_dim: int, hidden_dim: int, output_dim: int, n_layers: int,
+                 dropout: float, pad_idx: int, bidirectional: bool = True):
+        super().__init__()
+        
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
+        self.lstm = nn.LSTM(embedding_dim, hidden_dim, n_layers, dropout=dropout, 
+                           batch_first=True, bidirectional=bidirectional)
+        self.fc = nn.Linear(hidden_dim * 2 if bidirectional else hidden_dim, output_dim)
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, text):
+        embedded = self.dropout(self.embedding(text))
+        output, (hidden, cell) = self.lstm(embedded)
+        if self.lstm.bidirectional:
+            hidden = self.dropout(torch.cat((hidden[-2,:,:], hidden[-1,:,:]), dim=1))
+        else:
+            hidden = self.dropout(hidden[-1])
+        return self.fc(hidden)
+
+def load_data(file_path: str, sample_size: int = 10000000) -> pd.DataFrame:
     """Load and sample the dataset with error handling."""
-    # Get the absolute path to the file
     abs_path = os.path.abspath(file_path)
     
-    # Check if file exists
     if not os.path.exists(abs_path):
-        # Try to find the file in the current directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
         abs_path = os.path.join(current_dir, file_path)
         
@@ -69,12 +86,11 @@ def load_data(file_path: str, sample_size: int = 100000) -> pd.DataFrame:
     data = []
     try:
         with open(abs_path, 'r', encoding='utf-8') as f:
-            for i, line in enumerate(f):
+            for i, line in enumerate(tqdm(f, total=sample_size, desc="Loading data")):
                 if i >= sample_size:
                     break
                 try:
                     entry = json.loads(line)
-                    # Extract only the fields we need
                     processed_entry = {
                         'rating': entry.get('rating', 0),
                         'text': entry.get('text', ''),
@@ -125,163 +141,222 @@ def map_ratings_to_sentiment(rating):
     else:
         return 2  # Positive
 
-def create_model(vocab_size: int, params: ModelHyperparameters) -> tf.keras.Model:
-    """Create and compile the LSTM model with configurable hyperparameters."""
-    model = Sequential([
-        Embedding(
-            input_dim=vocab_size,
-            output_dim=params.embedding_dim,
-            input_length=params.max_length
-        ),
-        LSTM(
-            params.lstm_units,
-            dropout=params.lstm_dropout,
-            recurrent_dropout=params.lstm_recurrent_dropout
-        ),
-        Dense(params.dense_units, activation='relu'),
-        Dropout(params.dense_dropout),
-        Dense(3, activation='softmax')
-    ])
+def build_vocabulary(texts: List[str], min_freq: int = 2) -> Dict[str, int]:
+    """Build vocabulary from texts."""
+    word_counts = Counter()
+    for text in texts:
+        tokens = word_tokenize(text.lower())
+        word_counts.update(tokens)
     
-    optimizer = tf.keras.optimizers.Adam(learning_rate=params.learning_rate)
+    vocab = {'<PAD>': 0, '<UNK>': 1}
+    idx = 2
+    for word, count in word_counts.items():
+        if count >= min_freq:
+            vocab[word] = idx
+            idx += 1
     
-    model.compile(
-        optimizer=optimizer,
-        loss='sparse_categorical_crossentropy',
-        metrics=['accuracy']
+    return vocab
+
+def train_epoch(model: nn.Module, iterator: DataLoader, optimizer: torch.optim.Optimizer,
+                criterion: nn.Module, device: torch.device) -> float:
+    """Train the model for one epoch."""
+    model.train()
+    epoch_loss = 0
+    
+    for batch in tqdm(iterator, desc="Training", leave=False):
+        text, labels = batch
+        text, labels = text.to(device), labels.to(device)
+        
+        optimizer.zero_grad()
+        predictions = model(text)
+        loss = criterion(predictions, labels)
+        loss.backward()
+        optimizer.step()
+        
+        epoch_loss += loss.item()
+    
+    return epoch_loss / len(iterator)
+
+def evaluate(model: nn.Module, iterator: DataLoader, criterion: nn.Module,
+            device: torch.device) -> Tuple[float, np.ndarray, np.ndarray]:
+    """Evaluate the model."""
+    model.eval()
+    epoch_loss = 0
+    all_preds = []
+    all_labels = []
+    
+    with torch.no_grad():
+        for batch in tqdm(iterator, desc="Evaluating", leave=False):
+            text, labels = batch
+            text, labels = text.to(device), labels.to(device)
+            
+            predictions = model(text)
+            loss = criterion(predictions, labels)
+            
+            epoch_loss += loss.item()
+            
+            preds = torch.argmax(predictions, dim=1).cpu().numpy()
+            all_preds.extend(preds)
+            all_labels.extend(labels.cpu().numpy())
+    
+    return epoch_loss / len(iterator), np.array(all_preds), np.array(all_labels)
+
+def objective(trial):
+    # Hyperparameters to tune
+    embedding_dim = trial.suggest_int('embedding_dim', 50, 300)
+    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
+    n_layers = trial.suggest_int('n_layers', 1, 3)
+    dropout = trial.suggest_float('dropout', 0.1, 0.5)
+    learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
+    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
+    
+    # Load and preprocess data
+    df = load_data('Electronics.jsonl')
+    df['sentiment'] = df['rating'].apply(map_ratings_to_sentiment)
+    df['processed_text'] = df['text'].apply(preprocess_text)
+    
+    # Split data
+    X_train, X_test, y_train, y_test = train_test_split(
+        df['processed_text'].values, df['sentiment'].values,
+        test_size=0.2, random_state=42
     )
     
-    return model
-
-def tune_hyperparameters(
-    X_train: np.ndarray,
-    y_train: np.ndarray,
-    vocab_size: int,
-    param_grid: Optional[dict] = None
-) -> ModelHyperparameters:
-    """Perform hyperparameter tuning using grid search."""
-    if param_grid is None:
-        param_grid = {
-            'lstm_units': [64, 128, 256],
-            'lstm_dropout': [0.1, 0.2, 0.3],
-            'batch_size': [32, 64, 128],
-            'learning_rate': [0.001, 0.0001]
-        }
+    # Build vocabulary
+    vocab = build_vocabulary(X_train)
     
-    best_params = None
-    best_score = 0
+    # Create datasets
+    train_dataset = TextDataset(X_train, y_train, vocab, max_length=300)
+    test_dataset = TextDataset(X_test, y_test, vocab, max_length=300)
     
-    # Simple grid search implementation
-    for lstm_units in param_grid['lstm_units']:
-        for lstm_dropout in param_grid['lstm_dropout']:
-            for batch_size in param_grid['batch_size']:
-                for learning_rate in param_grid['learning_rate']:
-                    params = ModelHyperparameters(
-                        lstm_units=lstm_units,
-                        lstm_dropout=lstm_dropout,
-                        batch_size=batch_size,
-                        learning_rate=learning_rate
-                    )
-                    
-                    model = create_model(vocab_size, params)
-                    
-                    # Train with early stopping
-                    early_stopping = EarlyStopping(
-                        monitor='val_loss',
-                        patience=params.early_stopping_patience,
-                        restore_best_weights=True
-                    )
-                    
-                    history = model.fit(
-                        X_train,
-                        y_train,
-                        epochs=params.epochs,
-                        batch_size=params.batch_size,
-                        validation_split=params.validation_split,
-                        callbacks=[early_stopping],
-                        verbose=0
-                    )
-                    
-                    # Use validation accuracy as the score
-                    val_accuracy = max(history.history['val_accuracy'])
-                    if val_accuracy > best_score:
-                        best_score = val_accuracy
-                        best_params = params
+    # Create data loaders
+    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+    test_loader = DataLoader(test_dataset, batch_size=batch_size)
     
-    return best_params
+    # Initialize model
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+    model = LSTMClassifier(
+        vocab_size=len(vocab),
+        embedding_dim=embedding_dim,
+        hidden_dim=hidden_dim,
+        output_dim=3,
+        n_layers=n_layers,
+        dropout=dropout,
+        pad_idx=vocab['<PAD>']
+    ).to(device)
+    
+    # Training parameters
+    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
+    criterion = nn.CrossEntropyLoss()
+    
+    # Training loop
+    best_valid_loss = float('inf')
+    patience = 3
+    patience_counter = 0
+    
+    for epoch in range(10):  # Reduced epochs for hyperparameter tuning
+        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+        valid_loss, predictions, labels = evaluate(model, test_loader, criterion, device)
+        
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                break
+    
+    return best_valid_loss
 
 def main():
     try:
+        # Set device
+        device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        print(f"Using device: {device}")
+        
+        # Hyperparameter optimization
+        print("Starting hyperparameter optimization...")
+        study = optuna.create_study(direction='minimize')
+        study.optimize(objective, n_trials=20)  # Number of trials
+        
+        print("Best hyperparameters:")
+        for key, value in study.best_params.items():
+            print(f"{key}: {value}")
+        
+        # Train final model with best hyperparameters
+        print("\nTraining final model with best hyperparameters...")
+        best_params = study.best_params
+        
         # Load and preprocess data
         print("Loading data...")
-        # Try both possible file paths
-        try:
-            df = load_data('Electronics.jsonl')
-        except FileNotFoundError:
-            df = load_data('../Electronics.jsonl')
-        
-        # Map ratings to sentiment labels
+        df = load_data('Electronics.jsonl')
         df['sentiment'] = df['rating'].apply(map_ratings_to_sentiment)
-        
-        # Preprocess review text
-        print("Preprocessing text...")
         df['processed_text'] = df['text'].apply(preprocess_text)
         
         # Split data
         X_train, X_test, y_train, y_test = train_test_split(
-            df['processed_text'], df['sentiment'], test_size=0.2, random_state=42
+            df['processed_text'].values, df['sentiment'].values,
+            test_size=0.2, random_state=42
         )
         
-        # Tokenize and pad sequences
-        print("Tokenizing and padding sequences...")
-        tokenizer = Tokenizer()
-        tokenizer.fit_on_texts(X_train)
+        # Build vocabulary
+        print("Building vocabulary...")
+        vocab = build_vocabulary(X_train)
         
-        vocab_size = len(tokenizer.word_index) + 1
-        max_length = 300
+        # Create datasets
+        print("Creating datasets...")
+        train_dataset = TextDataset(X_train, y_train, vocab, max_length=300)
+        test_dataset = TextDataset(X_test, y_test, vocab, max_length=300)
         
-        X_train_seq = tokenizer.texts_to_sequences(X_train)
-        X_test_seq = tokenizer.texts_to_sequences(X_test)
+        # Create data loaders with larger batch size
+        batch_size = 256  # Increased batch size for better performance
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
+        test_loader = DataLoader(test_dataset, batch_size=batch_size)
         
-        X_train_pad = pad_sequences(X_train_seq, maxlen=max_length, padding='post')
-        X_test_pad = pad_sequences(X_test_seq, maxlen=max_length, padding='post')
+        # Initialize model with best hyperparameters
+        print("Initializing model...")
+        model = LSTMClassifier(
+            vocab_size=len(vocab),
+            embedding_dim=best_params['embedding_dim'],
+            hidden_dim=best_params['hidden_dim'],
+            output_dim=3,
+            n_layers=best_params['n_layers'],
+            dropout=best_params['dropout'],
+            pad_idx=vocab['<PAD>']
+        ).to(device)
         
-        # Hyperparameter tuning
-        print("Tuning hyperparameters...")
-        best_params = tune_hyperparameters(X_train_pad, y_train, vocab_size)
-        print("\nBest hyperparameters found:")
-        print(f"LSTM Units: {best_params.lstm_units}")
-        print(f"LSTM Dropout: {best_params.lstm_dropout}")
-        print(f"Batch Size: {best_params.batch_size}")
-        print(f"Learning Rate: {best_params.learning_rate}")
+        # Training parameters
+        optimizer = torch.optim.Adam(model.parameters(), lr=best_params['learning_rate'])
+        criterion = nn.CrossEntropyLoss()
+        n_epochs = 15  # Increased epochs
         
-        # Create and train model with best parameters
-        print("\nTraining final model...")
-        model = create_model(vocab_size, best_params)
+        # Training loop
+        print("Training model...")
+        best_valid_loss = float('inf')
+        train_losses = []
+        valid_losses = []
         
-        early_stopping = EarlyStopping(
-            monitor='val_loss',
-            patience=best_params.early_stopping_patience,
-            restore_best_weights=True
-        )
+        for epoch in range(n_epochs):
+            train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
+            valid_loss, predictions, labels = evaluate(model, test_loader, criterion, device)
+            
+            train_losses.append(train_loss)
+            valid_losses.append(valid_loss)
+            
+            if valid_loss < best_valid_loss:
+                best_valid_loss = valid_loss
+                torch.save(model.state_dict(), 'best_model.pt')
+            
+            print(f'Epoch: {epoch+1:02}')
+            print(f'\tTrain Loss: {train_loss:.3f}')
+            print(f'\tValid Loss: {valid_loss:.3f}')
         
-        history = model.fit(
-            X_train_pad,
-            y_train,
-            epochs=best_params.epochs,
-            batch_size=best_params.batch_size,
-            validation_split=best_params.validation_split,
-            callbacks=[early_stopping],
-            verbose=1
-        )
+        # Load best model and evaluate
+        model.load_state_dict(torch.load('best_model.pt'))
+        _, predictions, labels = evaluate(model, test_loader, criterion, device)
         
-        # Evaluate model
-        print("Evaluating model...")
-        y_pred = model.predict(X_test_pad)
-        y_pred_classes = np.argmax(y_pred, axis=1)
-        
-        accuracy = accuracy_score(y_test, y_pred_classes)
-        precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_pred_classes, average='weighted')
+        # Calculate metrics
+        accuracy = accuracy_score(labels, predictions)
+        precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='weighted')
         
         print("\nModel Evaluation:")
         print(f"Accuracy: {accuracy:.4f}")
@@ -293,34 +368,25 @@ def main():
         plt.figure(figsize=(12, 4))
         
         plt.subplot(1, 2, 1)
-        plt.plot(history.history['accuracy'], label='Training Accuracy')
-        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-        plt.title('Model Accuracy')
-        plt.xlabel('Epoch')
-        plt.ylabel('Accuracy')
-        plt.legend()
-        
-        plt.subplot(1, 2, 2)
-        plt.plot(history.history['loss'], label='Training Loss')
-        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.plot(train_losses, label='Training Loss')
+        plt.plot(valid_losses, label='Validation Loss')
         plt.title('Model Loss')
         plt.xlabel('Epoch')
         plt.ylabel('Loss')
         plt.legend()
         
-        plt.tight_layout()
-        plt.savefig('training_history.png')
-        plt.close()
-        
         # Plot confusion matrix
-        cm = confusion_matrix(y_test, y_pred_classes)
-        plt.figure(figsize=(10, 8))
+        cm = confusion_matrix(labels, predictions)
+        plt.subplot(1, 2, 2)
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
         plt.title('Confusion Matrix')
         plt.ylabel('True Label')
         plt.xlabel('Predicted Label')
-        plt.savefig('confusion_matrix.png')
+        
+        plt.tight_layout()
+        plt.savefig('training_history.png')
         plt.close()
+        
     except Exception as e:
         print(f"An error occurred: {e}")
         raise

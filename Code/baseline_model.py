@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.naive_bayes import MultinomialNB
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -12,19 +12,17 @@ from nltk.tokenize import word_tokenize
 import re
 import json
 import os
+from tqdm import tqdm
 
 # Download required NLTK data
 nltk.download('punkt')
 nltk.download('stopwords')
 
-def load_data(file_path: str, sample_size: int = 100000) -> pd.DataFrame:
+def load_data(file_path: str, sample_size: int = 10000000) -> pd.DataFrame:
     """Load and sample the dataset with error handling."""
-    # Get the absolute path to the file
     abs_path = os.path.abspath(file_path)
     
-    # Check if file exists
     if not os.path.exists(abs_path):
-        # Try to find the file in the current directory
         current_dir = os.path.dirname(os.path.abspath(__file__))
         abs_path = os.path.join(current_dir, file_path)
         
@@ -38,12 +36,11 @@ def load_data(file_path: str, sample_size: int = 100000) -> pd.DataFrame:
     data = []
     try:
         with open(abs_path, 'r', encoding='utf-8') as f:
-            for i, line in enumerate(f):
+            for i, line in enumerate(tqdm(f, total=sample_size, desc="Loading data")):
                 if i >= sample_size:
                     break
                 try:
                     entry = json.loads(line)
-                    # Extract only the fields we need
                     processed_entry = {
                         'rating': entry.get('rating', 0),
                         'text': entry.get('text', ''),
@@ -98,11 +95,7 @@ def main():
     try:
         # Load and preprocess data
         print("Loading data...")
-        # Try both possible file paths
-        try:
-            df = load_data('Electronics.jsonl')
-        except FileNotFoundError:
-            df = load_data('../Electronics.jsonl')
+        df = load_data('Electronics.jsonl')
         
         # Map ratings to sentiment labels
         df['sentiment'] = df['rating'].apply(map_ratings_to_sentiment)
@@ -112,28 +105,40 @@ def main():
         df['processed_text'] = df['text'].apply(preprocess_text)
         
         # Split data
+        print("Splitting data...")
         X_train, X_test, y_train, y_test = train_test_split(
-            df['processed_text'], df['sentiment'], test_size=0.2, random_state=42
+            df['processed_text'].values, df['sentiment'].values,
+            test_size=0.2, random_state=42
         )
         
         # Vectorize text
         print("Vectorizing text...")
-        vectorizer = TfidfVectorizer(max_features=5000)
+        vectorizer = TfidfVectorizer(
+            max_features=50000,  # Increased from 10000
+            ngram_range=(1, 2),  # Using both unigrams and bigrams
+            min_df=5,            # Increased from 2
+            max_df=0.95          # Increased from 0.9
+        )
         X_train_tfidf = vectorizer.fit_transform(X_train)
         X_test_tfidf = vectorizer.transform(X_test)
         
         # Train model
         print("Training model...")
-        model = MultinomialNB()
+        model = LogisticRegression(
+            C=1.0,              # Regularization strength
+            max_iter=1000,      # Increased iterations
+            n_jobs=-1,          # Use all available cores
+            class_weight='balanced'  # Handle class imbalance
+        )
         model.fit(X_train_tfidf, y_train)
         
-        # Make predictions
-        print("Making predictions...")
-        y_pred = model.predict(X_test_tfidf)
-        
         # Evaluate model
-        accuracy = accuracy_score(y_test, y_pred)
-        precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_pred, average='weighted')
+        print("Evaluating model...")
+        predictions = model.predict(X_test_tfidf)
+        
+        # Calculate metrics
+        accuracy = accuracy_score(y_test, predictions)
+        precision, recall, f1, _ = precision_recall_fscore_support(y_test, predictions, average='weighted')
         
         print("\nModel Evaluation:")
         print(f"Accuracy: {accuracy:.4f}")
@@ -142,14 +147,20 @@ def main():
         print(f"F1-Score: {f1:.4f}")
         
         # Plot confusion matrix
-        cm = confusion_matrix(y_test, y_pred)
-        plt.figure(figsize=(10, 8))
+        plt.figure(figsize=(8, 6))
+        cm = confusion_matrix(y_test, predictions)
         sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
         plt.title('Confusion Matrix')
         plt.ylabel('True Label')
         plt.xlabel('Predicted Label')
-        plt.savefig('confusion_matrix.png')
+        plt.tight_layout()
+        plt.savefig('baseline_confusion_matrix.png')
         plt.close()
+        
+        # Save model and vectorizer
+        import joblib
+        joblib.dump(model, 'baseline_model.joblib')
+        joblib.dump(vectorizer, 'baseline_vectorizer.joblib')
         
     except Exception as e:
         print(f"An error occurred: {e}")
