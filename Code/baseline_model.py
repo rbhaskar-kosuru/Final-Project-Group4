@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.feature_extraction.text import TfidfVectorizer
-from sklearn.linear_model import LogisticRegression
+from sklearn.naive_bayes import MultinomialNB
 from sklearn.metrics import accuracy_score, precision_recall_fscore_support, confusion_matrix
 import matplotlib.pyplot as plt
 import seaborn as sns
@@ -124,12 +124,7 @@ def main():
         
         # Train model
         print("Training model...")
-        model = LogisticRegression(
-            C=1.0,              # Regularization strength
-            max_iter=1000,      # Increased iterations
-            n_jobs=-1,          # Use all available cores
-            class_weight='balanced'  # Handle class imbalance
-        )
+        model = MultinomialNB(alpha=0.1)  # Using Multinomial Naive Bayes with smoothing
         model.fit(X_train_tfidf, y_train)
         
         # Evaluate model
