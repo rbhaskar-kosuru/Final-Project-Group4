@@ -17,6 +17,7 @@ import re
 import json
 from dataclasses import dataclass
 from typing import List, Optional
+import os
 
 # Download required NLTK data
 nltk.download('punkt')
@@ -47,18 +48,58 @@ class ModelHyperparameters:
     # Learning rate
     learning_rate: float = 0.001
 
-def load_data(file_path, sample_size=100000):
-    """Load and sample the dataset."""
+def load_data(file_path: str, sample_size: int = 100000) -> pd.DataFrame:
+    """Load and sample the dataset with error handling."""
+    # Get the absolute path to the file
+    abs_path = os.path.abspath(file_path)
+    
+    # Check if file exists
+    if not os.path.exists(abs_path):
+        # Try to find the file in the current directory
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        abs_path = os.path.join(current_dir, file_path)
+        
+        if not os.path.exists(abs_path):
+            raise FileNotFoundError(
+                f"Could not find the data file at {file_path} or {abs_path}. "
+                "Please ensure the file exists and the path is correct."
+            )
+    
+    print(f"Loading data from: {abs_path}")
     data = []
-    with open(file_path, 'r', encoding='utf-8') as f:
-        for i, line in enumerate(f):
-            if i >= sample_size:
-                break
-            data.append(json.loads(line))
+    try:
+        with open(abs_path, 'r', encoding='utf-8') as f:
+            for i, line in enumerate(f):
+                if i >= sample_size:
+                    break
+                try:
+                    entry = json.loads(line)
+                    # Extract only the fields we need
+                    processed_entry = {
+                        'rating': entry.get('rating', 0),
+                        'text': entry.get('text', ''),
+                        'title': entry.get('title', ''),
+                        'helpful_votes': entry.get('helpful_votes', 0),
+                        'verified_purchase': entry.get('verified_purchase', False)
+                    }
+                    data.append(processed_entry)
+                except json.JSONDecodeError as e:
+                    print(f"Warning: Skipping line {i+1} due to JSON decode error: {e}")
+                    continue
+    except Exception as e:
+        raise Exception(f"Error loading data file: {e}")
+    
+    if not data:
+        raise ValueError("No data was loaded. The file might be empty or in an incorrect format.")
+    
+    print(f"Successfully loaded {len(data)} samples")
     return pd.DataFrame(data)
 
 def preprocess_text(text):
     """Clean and preprocess text."""
+    if not isinstance(text, str):
+        return ""
+        
     # Convert to lowercase
     text = text.lower()
     # Remove punctuation and special characters
@@ -74,6 +115,9 @@ def preprocess_text(text):
 
 def map_ratings_to_sentiment(rating):
     """Map star ratings to sentiment labels."""
+    if not isinstance(rating, (int, float)):
+        return 1  # Default to neutral if rating is invalid
+        
     if rating in [1, 2]:
         return 0  # Negative
     elif rating == 3:
@@ -167,111 +211,119 @@ def tune_hyperparameters(
     return best_params
 
 def main():
-    # Load and preprocess data
-    print("Loading data...")
-    df = load_data('../Electronics.jsonl')
-    
-    # Map ratings to sentiment labels
-    df['sentiment'] = df['star_rating'].apply(map_ratings_to_sentiment)
-    
-    # Preprocess review text
-    print("Preprocessing text...")
-    df['processed_text'] = df['review_body'].apply(preprocess_text)
-    
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        df['processed_text'], df['sentiment'], test_size=0.2, random_state=42
-    )
-    
-    # Tokenize and pad sequences
-    print("Tokenizing and padding sequences...")
-    tokenizer = Tokenizer()
-    tokenizer.fit_on_texts(X_train)
-    
-    vocab_size = len(tokenizer.word_index) + 1
-    max_length = 300
-    
-    X_train_seq = tokenizer.texts_to_sequences(X_train)
-    X_test_seq = tokenizer.texts_to_sequences(X_test)
-    
-    X_train_pad = pad_sequences(X_train_seq, maxlen=max_length, padding='post')
-    X_test_pad = pad_sequences(X_test_seq, maxlen=max_length, padding='post')
-    
-    # Hyperparameter tuning
-    print("Tuning hyperparameters...")
-    best_params = tune_hyperparameters(X_train_pad, y_train, vocab_size)
-    print("\nBest hyperparameters found:")
-    print(f"LSTM Units: {best_params.lstm_units}")
-    print(f"LSTM Dropout: {best_params.lstm_dropout}")
-    print(f"Batch Size: {best_params.batch_size}")
-    print(f"Learning Rate: {best_params.learning_rate}")
-    
-    # Create and train model with best parameters
-    print("\nTraining final model...")
-    model = create_model(vocab_size, best_params)
-    
-    early_stopping = EarlyStopping(
-        monitor='val_loss',
-        patience=best_params.early_stopping_patience,
-        restore_best_weights=True
-    )
-    
-    history = model.fit(
-        X_train_pad,
-        y_train,
-        epochs=best_params.epochs,
-        batch_size=best_params.batch_size,
-        validation_split=best_params.validation_split,
-        callbacks=[early_stopping],
-        verbose=1
-    )
-    
-    # Evaluate model
-    print("Evaluating model...")
-    y_pred = model.predict(X_test_pad)
-    y_pred_classes = np.argmax(y_pred, axis=1)
-    
-    accuracy = accuracy_score(y_test, y_pred_classes)
-    precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_pred_classes, average='weighted')
-    
-    print("\nModel Evaluation:")
-    print(f"Accuracy: {accuracy:.4f}")
-    print(f"Precision: {precision:.4f}")
-    print(f"Recall: {recall:.4f}")
-    print(f"F1-Score: {f1:.4f}")
-    
-    # Plot training history
-    plt.figure(figsize=(12, 4))
-    
-    plt.subplot(1, 2, 1)
-    plt.plot(history.history['accuracy'], label='Training Accuracy')
-    plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
-    plt.title('Model Accuracy')
-    plt.xlabel('Epoch')
-    plt.ylabel('Accuracy')
-    plt.legend()
-    
-    plt.subplot(1, 2, 2)
-    plt.plot(history.history['loss'], label='Training Loss')
-    plt.plot(history.history['val_loss'], label='Validation Loss')
-    plt.title('Model Loss')
-    plt.xlabel('Epoch')
-    plt.ylabel('Loss')
-    plt.legend()
-    
-    plt.tight_layout()
-    plt.savefig('training_history.png')
-    plt.close()
-    
-    # Plot confusion matrix
-    cm = confusion_matrix(y_test, y_pred_classes)
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
-    plt.title('Confusion Matrix')
-    plt.ylabel('True Label')
-    plt.xlabel('Predicted Label')
-    plt.savefig('confusion_matrix.png')
-    plt.close()
+    try:
+        # Load and preprocess data
+        print("Loading data...")
+        # Try both possible file paths
+        try:
+            df = load_data('Electronics.jsonl')
+        except FileNotFoundError:
+            df = load_data('../Electronics.jsonl')
+        
+        # Map ratings to sentiment labels
+        df['sentiment'] = df['rating'].apply(map_ratings_to_sentiment)
+        
+        # Preprocess review text
+        print("Preprocessing text...")
+        df['processed_text'] = df['text'].apply(preprocess_text)
+        
+        # Split data
+        X_train, X_test, y_train, y_test = train_test_split(
+            df['processed_text'], df['sentiment'], test_size=0.2, random_state=42
+        )
+        
+        # Tokenize and pad sequences
+        print("Tokenizing and padding sequences...")
+        tokenizer = Tokenizer()
+        tokenizer.fit_on_texts(X_train)
+        
+        vocab_size = len(tokenizer.word_index) + 1
+        max_length = 300
+        
+        X_train_seq = tokenizer.texts_to_sequences(X_train)
+        X_test_seq = tokenizer.texts_to_sequences(X_test)
+        
+        X_train_pad = pad_sequences(X_train_seq, maxlen=max_length, padding='post')
+        X_test_pad = pad_sequences(X_test_seq, maxlen=max_length, padding='post')
+        
+        # Hyperparameter tuning
+        print("Tuning hyperparameters...")
+        best_params = tune_hyperparameters(X_train_pad, y_train, vocab_size)
+        print("\nBest hyperparameters found:")
+        print(f"LSTM Units: {best_params.lstm_units}")
+        print(f"LSTM Dropout: {best_params.lstm_dropout}")
+        print(f"Batch Size: {best_params.batch_size}")
+        print(f"Learning Rate: {best_params.learning_rate}")
+        
+        # Create and train model with best parameters
+        print("\nTraining final model...")
+        model = create_model(vocab_size, best_params)
+        
+        early_stopping = EarlyStopping(
+            monitor='val_loss',
+            patience=best_params.early_stopping_patience,
+            restore_best_weights=True
+        )
+        
+        history = model.fit(
+            X_train_pad,
+            y_train,
+            epochs=best_params.epochs,
+            batch_size=best_params.batch_size,
+            validation_split=best_params.validation_split,
+            callbacks=[early_stopping],
+            verbose=1
+        )
+        
+        # Evaluate model
+        print("Evaluating model...")
+        y_pred = model.predict(X_test_pad)
+        y_pred_classes = np.argmax(y_pred, axis=1)
+        
+        accuracy = accuracy_score(y_test, y_pred_classes)
+        precision, recall, f1, _ = precision_recall_fscore_support(y_test, y_pred_classes, average='weighted')
+        
+        print("\nModel Evaluation:")
+        print(f"Accuracy: {accuracy:.4f}")
+        print(f"Precision: {precision:.4f}")
+        print(f"Recall: {recall:.4f}")
+        print(f"F1-Score: {f1:.4f}")
+        
+        # Plot training history
+        plt.figure(figsize=(12, 4))
+        
+        plt.subplot(1, 2, 1)
+        plt.plot(history.history['accuracy'], label='Training Accuracy')
+        plt.plot(history.history['val_accuracy'], label='Validation Accuracy')
+        plt.title('Model Accuracy')
+        plt.xlabel('Epoch')
+        plt.ylabel('Accuracy')
+        plt.legend()
+        
+        plt.subplot(1, 2, 2)
+        plt.plot(history.history['loss'], label='Training Loss')
+        plt.plot(history.history['val_loss'], label='Validation Loss')
+        plt.title('Model Loss')
+        plt.xlabel('Epoch')
+        plt.ylabel('Loss')
+        plt.legend()
+        
+        plt.tight_layout()
+        plt.savefig('training_history.png')
+        plt.close()
+        
+        # Plot confusion matrix
+        cm = confusion_matrix(y_test, y_pred_classes)
+        plt.figure(figsize=(10, 8))
+        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues')
+        plt.title('Confusion Matrix')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
+        plt.savefig('confusion_matrix.png')
+        plt.close()
+    except Exception as e:
+        print(f"An error occurred: {e}")
+        raise
 
 if __name__ == "__main__":
     main() 
