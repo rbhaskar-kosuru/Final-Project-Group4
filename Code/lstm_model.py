@@ -15,7 +15,6 @@ import json
 import os
 from typing import List, Dict, Tuple
 from collections import Counter
-import optuna
 from tqdm import tqdm
 
 # Download required NLTK data
@@ -201,90 +200,11 @@ def evaluate(model: nn.Module, iterator: DataLoader, criterion: nn.Module,
     
     return epoch_loss / len(iterator), np.array(all_preds), np.array(all_labels)
 
-def objective(trial):
-    # Hyperparameters to tune
-    embedding_dim = trial.suggest_int('embedding_dim', 50, 300)
-    hidden_dim = trial.suggest_int('hidden_dim', 64, 256)
-    n_layers = trial.suggest_int('n_layers', 1, 3)
-    dropout = trial.suggest_float('dropout', 0.1, 0.5)
-    learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
-    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    
-    # Load and preprocess data
-    df = load_data('Electronics.jsonl')
-    df['sentiment'] = df['rating'].apply(map_ratings_to_sentiment)
-    df['processed_text'] = df['text'].apply(preprocess_text)
-    
-    # Split data
-    X_train, X_test, y_train, y_test = train_test_split(
-        df['processed_text'].values, df['sentiment'].values,
-        test_size=0.2, random_state=42
-    )
-    
-    # Build vocabulary
-    vocab = build_vocabulary(X_train)
-    
-    # Create datasets
-    train_dataset = TextDataset(X_train, y_train, vocab, max_length=300)
-    test_dataset = TextDataset(X_test, y_test, vocab, max_length=300)
-    
-    # Create data loaders
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=batch_size)
-    
-    # Initialize model
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    model = LSTMClassifier(
-        vocab_size=len(vocab),
-        embedding_dim=embedding_dim,
-        hidden_dim=hidden_dim,
-        output_dim=3,
-        n_layers=n_layers,
-        dropout=dropout,
-        pad_idx=vocab['<PAD>']
-    ).to(device)
-    
-    # Training parameters
-    optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-    criterion = nn.CrossEntropyLoss()
-    
-    # Training loop
-    best_valid_loss = float('inf')
-    patience = 3
-    patience_counter = 0
-    
-    for epoch in range(10):  # Reduced epochs for hyperparameter tuning
-        train_loss = train_epoch(model, train_loader, optimizer, criterion, device)
-        valid_loss, predictions, labels = evaluate(model, test_loader, criterion, device)
-        
-        if valid_loss < best_valid_loss:
-            best_valid_loss = valid_loss
-            patience_counter = 0
-        else:
-            patience_counter += 1
-            if patience_counter >= patience:
-                break
-    
-    return best_valid_loss
-
 def main():
     try:
         # Set device
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         print(f"Using device: {device}")
-        
-        # Hyperparameter optimization
-        print("Starting hyperparameter optimization...")
-        study = optuna.create_study(direction='minimize')
-        study.optimize(objective, n_trials=20)  # Number of trials
-        
-        print("Best hyperparameters:")
-        for key, value in study.best_params.items():
-            print(f"{key}: {value}")
-        
-        # Train final model with best hyperparameters
-        print("\nTraining final model with best hyperparameters...")
-        best_params = study.best_params
         
         # Load and preprocess data
         print("Loading data...")
@@ -293,6 +213,7 @@ def main():
         df['processed_text'] = df['text'].apply(preprocess_text)
         
         # Split data
+        print("Splitting data...")
         X_train, X_test, y_train, y_test = train_test_split(
             df['processed_text'].values, df['sentiment'].values,
             test_size=0.2, random_state=42
@@ -307,27 +228,28 @@ def main():
         train_dataset = TextDataset(X_train, y_train, vocab, max_length=300)
         test_dataset = TextDataset(X_test, y_test, vocab, max_length=300)
         
-        # Create data loaders with larger batch size
-        batch_size = 256  # Increased batch size for better performance
+        # Create data loaders with optimized batch size
+        batch_size = 256
         train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
         test_loader = DataLoader(test_dataset, batch_size=batch_size)
         
-        # Initialize model with best hyperparameters
+        # Initialize model with reasonable default values
         print("Initializing model...")
         model = LSTMClassifier(
             vocab_size=len(vocab),
-            embedding_dim=best_params['embedding_dim'],
-            hidden_dim=best_params['hidden_dim'],
-            output_dim=3,
-            n_layers=best_params['n_layers'],
-            dropout=best_params['dropout'],
-            pad_idx=vocab['<PAD>']
+            embedding_dim=200,      # Increased embedding dimension for better word representation
+            hidden_dim=256,         # Increased hidden dimension for better feature learning
+            output_dim=3,           # Three sentiment classes
+            n_layers=2,             # Two LSTM layers for better feature extraction
+            dropout=0.3,            # Moderate dropout for regularization
+            pad_idx=vocab['<PAD>'],
+            bidirectional=True      # Bidirectional LSTM for better context understanding
         ).to(device)
         
         # Training parameters
-        optimizer = torch.optim.Adam(model.parameters(), lr=best_params['learning_rate'])
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
         criterion = nn.CrossEntropyLoss()
-        n_epochs = 15  # Increased epochs
+        n_epochs = 15
         
         # Training loop
         print("Training model...")
