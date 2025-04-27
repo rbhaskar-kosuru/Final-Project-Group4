@@ -225,31 +225,31 @@ def main():
         
         # Create datasets
         print("Creating datasets...")
-        train_dataset = TextDataset(X_train, y_train, vocab, max_length=300)
-        test_dataset = TextDataset(X_test, y_test, vocab, max_length=300)
+        train_dataset = TextDataset(X_train, y_train, vocab, max_length=200)  # Reduced from 300
+        test_dataset = TextDataset(X_test, y_test, vocab, max_length=200)     # Reduced from 300
         
         # Create data loaders with optimized batch size
-        batch_size = 256
-        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-        test_loader = DataLoader(test_dataset, batch_size=batch_size)
+        batch_size = 512  # Increased batch size for faster training
+        train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)  # Added workers
+        test_loader = DataLoader(test_dataset, batch_size=batch_size, num_workers=4)  # Added workers
         
-        # Initialize model with reasonable default values
+        # Initialize model with speed-optimized values
         print("Initializing model...")
         model = LSTMClassifier(
             vocab_size=len(vocab),
-            embedding_dim=200,      # Increased embedding dimension for better word representation
-            hidden_dim=256,         # Increased hidden dimension for better feature learning
+            embedding_dim=128,      # Reduced from 200
+            hidden_dim=128,         # Reduced from 256
             output_dim=3,           # Three sentiment classes
-            n_layers=2,             # Two LSTM layers for better feature extraction
-            dropout=0.3,            # Moderate dropout for regularization
+            n_layers=1,             # Single layer for speed
+            dropout=0.2,            # Reduced dropout
             pad_idx=vocab['<PAD>'],
-            bidirectional=True      # Bidirectional LSTM for better context understanding
+            bidirectional=True      # Keep bidirectional for performance
         ).to(device)
         
-        # Training parameters
-        optimizer = torch.optim.Adam(model.parameters(), lr=0.001)
+        # Training parameters optimized for speed
+        optimizer = torch.optim.Adam(model.parameters(), lr=0.002)  # Increased learning rate
         criterion = nn.CrossEntropyLoss()
-        n_epochs = 15
+        n_epochs = 10  # Reduced epochs
         
         # Training loop
         print("Training model...")
