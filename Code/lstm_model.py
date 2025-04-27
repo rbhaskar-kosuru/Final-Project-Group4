@@ -68,7 +68,7 @@ class LSTMClassifier(nn.Module):
             hidden = self.dropout(hidden[-1])
         return self.fc(hidden)
 
-def load_data(file_path: str, sample_size: int = 10000000) -> pd.DataFrame:
+def load_data(file_path: str, sample_size: int = 1000000) -> pd.DataFrame:
     """Load and sample the dataset with error handling."""
     abs_path = os.path.abspath(file_path)
     
