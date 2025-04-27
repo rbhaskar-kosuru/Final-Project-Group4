@@ -13,6 +13,8 @@ import re
 import json
 import os
 from tqdm import tqdm
+from joblib import Parallel, delayed
+import multiprocessing
 
 # Download required NLTK data
 nltk.download('punkt')
@@ -100,9 +102,12 @@ def main():
         # Map ratings to sentiment labels
         df['sentiment'] = df['rating'].apply(map_ratings_to_sentiment)
         
-        # Preprocess review text
+        # Preprocess text in parallel
         print("Preprocessing text...")
-        df['processed_text'] = df['text'].apply(preprocess_text)
+        n_jobs = multiprocessing.cpu_count() - 1  # Use all but one CPU core
+        df['processed_text'] = Parallel(n_jobs=n_jobs)(
+            delayed(preprocess_text)(text) for text in tqdm(df['text'], desc="Preprocessing")
+        )
         
         # Split data
         print("Splitting data...")
@@ -111,18 +116,19 @@ def main():
             test_size=0.2, random_state=42
         )
         
-        # Vectorize text
+        # Vectorize text with optimized parameters
         print("Vectorizing text...")
         vectorizer = TfidfVectorizer(
-            max_features=50000,  # Increased from 10000
-            ngram_range=(1, 2),  # Using both unigrams and bigrams
-            min_df=5,            # Increased from 2
-            max_df=0.95          # Increased from 0.9
+            max_features=20000,      # Reduced from 50000
+            ngram_range=(1, 2),      # Keep bigrams for performance
+            min_df=3,                # Reduced from 5
+            max_df=0.95,             # Keep same
+            n_jobs=n_jobs            # Parallel processing
         )
         X_train_tfidf = vectorizer.fit_transform(X_train)
         X_test_tfidf = vectorizer.transform(X_test)
         
-        # Train model
+        # Train model with optimized parameters
         print("Training model...")
         model = MultinomialNB(alpha=0.1)  # Using Multinomial Naive Bayes with smoothing
         model.fit(X_train_tfidf, y_train)
