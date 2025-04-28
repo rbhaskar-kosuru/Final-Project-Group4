@@ -12,6 +12,10 @@ import seaborn as sns
 from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
+import re
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+import nltk
 
 # Paths
 data_dir = "./amazon_electronics"
@@ -64,10 +68,6 @@ def map_ratings_to_sentiment(rating):
         return 2
 
 # Text Preprocessing
-import re
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-import nltk
 nltk.download('punkt')
 nltk.download('stopwords')
 
