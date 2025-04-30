@@ -21,14 +21,20 @@ Electronics reviews are particularly interesting for NLP analysis because they o
 
 Amazon Electronics Reviews - https://amazon-reviews-2023.github.io. This comprehensive dataset contains millions of product reviews with various fields including:
 •	Star ratings (1-5)
+
 •	Review text
+
 •	Review titles
+
 •	Helpful votes
+
 •	Verified purchase indicators
 
 For sentiment classification:
 •	Negative: 1-2 stars
+
 •	Neutral: 3 stars
+
 •	Positive: 4-5 stars
 
 ## Models Used:
@@ -41,10 +47,15 @@ For sentiment classification:
 ## Framework and Libraries:
 
 •	PyTorch
+
 •	Scikit-learn
+
 •	NLTK
+
 •	Pandas/NumPy
+
 •	Matplotlib/Seaborn
+
 •	tqdm
 
 ## Code Structure:
@@ -53,8 +64,11 @@ For sentiment classification:
 2.	Tokenization: Breaking the text into words or tokens for model processing.
 3.	Vocabulary Building: Creating a mapping from tokens to indices with handling for out-of-vocabulary words.
 4.	Feature Extraction:
+   
 •	For baseline: TF-IDF vectorization with n-grams4.
+
 •	For deep learning models: Learning word embeddings from scratch.
+
 5.	Sentiment Classification: Training models to predict the three sentiment classes.
 
 
