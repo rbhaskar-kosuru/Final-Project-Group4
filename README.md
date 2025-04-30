@@ -19,7 +19,8 @@ Electronics reviews are particularly interesting for NLP analysis because they o
 
 ## Dataset Source:
 
-Amazon Electronics Reviews - https://amazon-reviews-2023.github.io. This comprehensive dataset contains millions of product reviews with various fields including:
+Amazon Electronics Reviews - https://mcauleylab.ucsd.edu/public_datasets/data/amazon_2023/raw/review_categories/Electronics.jsonl.gz. This comprehensive dataset contains millions of product reviews with various fields including:
+
 •	Star ratings (1-5)
 
 •	Review text
@@ -66,7 +67,7 @@ For sentiment classification:
 3.	Vocabulary Building: Creating a mapping from tokens to indices with handling for out-of-vocabulary words.
 4.	Feature Extraction:
    
-   •	For baseline: TF-IDF vectorization with n-grams4.
+   •	For baseline: TF-IDF vectorization with n-grams.
    
    •	For deep learning models: Learning word embeddings from scratch.
 
