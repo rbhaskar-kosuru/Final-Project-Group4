@@ -12,10 +12,7 @@ import seaborn as sns
 from tqdm import tqdm
 import torch.nn as nn
 import torch.optim as optim
-import re
-from nltk.tokenize import word_tokenize
-from nltk.corpus import stopwords
-import nltk
+import pickle
 
 # Paths
 data_dir = "./amazon_electronics"
@@ -68,6 +65,10 @@ def map_ratings_to_sentiment(rating):
         return 2
 
 # Text Preprocessing
+import re
+from nltk.tokenize import word_tokenize
+from nltk.corpus import stopwords
+import nltk
 nltk.download('punkt')
 nltk.download('stopwords')
 
@@ -214,6 +215,13 @@ def main():
     print(f"Precision: {precision:.4f}")
     print(f"Recall: {recall:.4f}")
     print(f"F1 Score: {f1:.4f}")
+
+    # Save the vocabulary (tokenizer)
+
+    with open('vocab.pkl', 'wb') as f:
+        pickle.dump(vocab, f)
+
+    print("Saved vocabulary (tokenizer) to vocab.pkl")
 
     # Save Metrics Bar Chart
     metrics = {'Accuracy': accuracy, 'Precision': precision, 'Recall': recall, 'F1 Score': f1}
