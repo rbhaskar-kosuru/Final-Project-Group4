@@ -1,0 +1,48 @@
+Project Proposal (Draft)
+Project Title
+Sentiment Analysis of Amazon Electronics Reviews using LSTM and Naive Bayes Models
+
+Problem Selection
+We selected the problem of sentiment analysis on Amazon Electronics reviews because customer reviews influence purchasing behavior, and understanding sentiment can help companies improve products and services. We focus on Electronics because it is one of Amazon's largest and most review-rich categories, allowing robust model training and evaluation.
+
+Dataset
+We will use the Amazon 2023 Reviews Dataset, specifically the Electronics subset (link).
+The dataset contains millions of product reviews, each with metadata including the review text and a star rating (1 to 5 stars).
+
+We will convert star ratings into sentiment labels:
+
+1–2 stars → Negative
+
+3 stars → Neutral
+
+4–5 stars → Positive
+
+NLP Methods
+We will use two approaches:
+
+Baseline Model: Naive Bayes classifier (Rule-Based Model) using TF-IDF features.
+
+Advanced Model: Long Short-Term Memory (LSTM) network (Recurrent Neural Network) with pretrained word embeddings (e.g., GloVe or FastText).
+
+Packages
+Scikit-learn: For classical ML model (Naive Bayes), metrics, and preprocessing.
+
+TensorFlow/Keras: For building and training the LSTM model.
+
+NLTK / SpaCy: For basic text preprocessing (tokenization, stopword removal).
+
+Matplotlib / Seaborn: For visualization of model performance.
+
+NLP Tasks
+Sentiment classification: Map review texts to Positive, Negative, or Neutral classes.
+
+Performance Metrics
+Accuracy
+
+Precision
+
+Recall
+
+F1 Score
+
+Confusion Matrix
