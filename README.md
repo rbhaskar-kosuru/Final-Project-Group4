@@ -67,6 +67,7 @@ For sentiment classification:
 4.	Feature Extraction:
    
    •	For baseline: TF-IDF vectorization with n-grams4.
+   
    •	For deep learning models: Learning word embeddings from scratch.
 
 5.	Sentiment Classification: Training models to predict the three sentiment classes.
