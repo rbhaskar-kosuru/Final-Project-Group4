@@ -31,6 +31,7 @@ Amazon Electronics Reviews - https://amazon-reviews-2023.github.io. This compreh
 •	Verified purchase indicators
 
 For sentiment classification:
+
 •	Negative: 1-2 stars
 
 •	Neutral: 3 stars
@@ -65,9 +66,8 @@ For sentiment classification:
 3.	Vocabulary Building: Creating a mapping from tokens to indices with handling for out-of-vocabulary words.
 4.	Feature Extraction:
    
-•	For baseline: TF-IDF vectorization with n-grams4.
-
-•	For deep learning models: Learning word embeddings from scratch.
+   •	For baseline: TF-IDF vectorization with n-grams4.
+   •	For deep learning models: Learning word embeddings from scratch.
 
 5.	Sentiment Classification: Training models to predict the three sentiment classes.
 
