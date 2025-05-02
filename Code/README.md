@@ -10,6 +10,8 @@ This repository contains two main scripts:
 - **`model_predict.py`**  
   Loads the trained model and vocabulary to perform inference on new reviews.
 
+- **`streamlit_app.py`**
+  A Streamlit web app that lets you enter Amazon reviews, runs them through a pretrained LSTM sentiment model, displays the predicted sentiment with an explanation, and generates an automated customer response.
 ---
 
 ## Prerequisites
