@@ -16,12 +16,7 @@ This repository contains two main scripts:
 
 1. **Python 3.7+**  
 2. Install required packages:
-
-torch
-numpy
-pandas
-nltk
-scikit-learn
+torch, numpypandas, nltk, scikit-learn
 
 
 - Run **`LSTM_train.py`**   first 
