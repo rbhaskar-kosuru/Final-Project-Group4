@@ -15,7 +15,7 @@ This repository contains two main scripts:
 ## Prerequisites
 
 1. **Python 3.7+**  
-2. Install required packages:
+2. Install required packages and requirements.txt
 torch, numpypandas, nltk, scikit-learn
 
 ## Instructions:
