@@ -24,6 +24,6 @@ nltk
 scikit-learn
 
 
-- Run LSTM.train.py first 
+- Run **`LSTM_train.py`**   first 
 - Make sure model_LSTM.pt and LSTM_vectorizer.json are in the same directory as model_predict.py.
-- Run model_predict.py 
+- Run **`model_predict.py`**  
