@@ -18,14 +18,16 @@ This repository contains two main scripts:
 2. Install required packages:
 torch, numpypandas, nltk, scikit-learn
 
-
+## Instructions:
 - Run **`LSTM_train.py`**   first 
 - Make sure model_LSTM.pt and LSTM_vectorizer.json are in the same directory as model_predict.py.
 - Run **`model_predict.py`**  
 - Follow the instructions to enter the review. Enter 'Submit' at the end of the review and click Enter. 
 
 ---
-- To run streamlit python script install streamlit and run the in the terminal.
+## Streamlit
+
+- To run streamlit python script install streamlit and run the **streamlit_app.py**  python script in the terminal.
 
 ---
 
