@@ -1,4 +1,4 @@
-# Sentiment Analysis with LSTM
+# Instructions to run main scripts:
 
 This repository contains two main scripts: 
 
