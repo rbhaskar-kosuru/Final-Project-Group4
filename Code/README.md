@@ -22,7 +22,7 @@ torch, numpypandas, nltk, scikit-learn
 - Run **`LSTM_train.py`**   first 
 - Make sure model_LSTM.pt and LSTM_vectorizer.json are in the same directory as model_predict.py.
 - Run **`model_predict.py`**  
-- Follow the instructions to enter the review. Enter 'Submit' at the end of the review and click Enter. 
+- Follow the instructions to write the review. Type 'Submit' at the end of the review and click Enter. 
 
 ---
 ## Streamlit
